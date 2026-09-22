@@ -14,10 +14,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "ndk;25.2.9519653"
       - name: Install Android NDK
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;25.2.9519653"
+          test -d "$ANDROID_HOME/ndk/25.2.9519653"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
