@@ -2,6 +2,9 @@ package com.tracker.motionengine
 
 import java.nio.ByteBuffer
 
+private fun FloatArray.toPoints(): List<MotionEngine.Point> =
+    if (isEmpty()) emptyList() else asList().chunked(2).map { MotionEngine.Point(it[0], it[1]) }
+
 class MotionEngine {
     enum class PixelFormat(val nativeValue: Int) { RGBA(0), GRAY(1), YUV420(2) }
     data class Point(val x: Float, val y: Float)
@@ -57,9 +60,6 @@ class MotionEngine {
                 format.nativeValue, values, windowRadius).toPoints()
         }
     }
-
-    private fun FloatArray.toPoints(): List<Point> =
-        if (isEmpty()) emptyList() else asList().chunked(2).map { Point(it[0], it[1]) }
 
     private external fun nativeInitializeTrackingPoints(frame: ByteBuffer, width: Int, height: Int,
                                                        stride: Int, format: Int, columns: Int, rows: Int): FloatArray
