@@ -1,5 +1,6 @@
 plugins {
     id("com.android.library")
+    `maven-publish`
     kotlin("android")
 }
 
@@ -40,5 +41,18 @@ android {
 
     buildFeatures {
         buildConfig = false
+    }
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                groupId = "com.github.satyabratadey10-a11y"
+                artifactId = "SHDMotion"
+                version = "1.0.1"
+            }
+        }
     }
 }
