@@ -49,9 +49,7 @@ afterEvaluate {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
-                groupId = "com.github.satyabratadey10-a11y"
                 artifactId = "SHDMotion"
-                version = "1.0.1"
             }
         }
     }
