@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MotionEngine"
 include(":motion-engine")
+include(":demo")

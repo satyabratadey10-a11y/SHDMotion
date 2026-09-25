@@ -26,8 +26,10 @@ jobs:
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.7
       - name: Build release AAR
-        run: ./gradlew :motion-engine:assembleRelease
+        run: ./gradlew :motion-engine:assembleRelease :demo:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: motion-engine-aar
-          path: motion-engine/build/outputs/aar/*.aar
+          name: motion-engine-aar-and-demo-apk
+          path: |
+            motion-engine/build/outputs/aar/*.aar
+            demo/build/outputs/apk/debug/*.apk

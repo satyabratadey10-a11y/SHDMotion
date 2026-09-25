@@ -47,6 +47,23 @@ implementation("com.github.satyabratadey10-a11y:SHDMotion:v1.0.0")
 
 Release tags are recommended for production builds; `main-SNAPSHOT` is intended for development.
 
+## Test with the demo Android app
+
+The `demo` module builds a debug APK. Install it on an Android device, tap **Choose MP4 and
+track**, select a video through the system document picker, and wait for processing. The app
+samples frames with Android's `MediaMetadataRetriever`, detects the light-blue region in the
+first frame, tracks it with the native bounding-box matcher, shows the final annotated frame,
+and writes a CSV of `time_ms,x,y,width,height` in the app cache directory.
+
+The APK is built by GitHub Actions and uploaded together with the AAR:
+
+```text
+demo/build/outputs/apk/debug/demo-debug.apk
+```
+
+The demo intentionally processes frames off the UI thread and requires no storage permission;
+the Android document picker grants read access to the selected MP4.
+
 ## Direct-buffer API
 
 The Kotlin API accepts direct `java.nio.ByteBuffer` instances. Frames must use the declared stride and pixel format:
