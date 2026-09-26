@@ -49,7 +49,12 @@ afterEvaluate {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
+                groupId = "com.github.satyabratadey10-a11y"
                 artifactId = "SHDMotion"
+                version = providers.gradleProperty("VERSION")
+                    .orElse(providers.environmentVariable("VERSION"))
+                    .orElse("1.0.0")
+                    .get()
             }
         }
     }

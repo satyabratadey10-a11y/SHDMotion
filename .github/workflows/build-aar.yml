@@ -28,7 +28,12 @@ jobs:
       - name: Build release AAR
         run: |
           ./gradlew :motion-engine:assembleRelease
-          ./gradlew :demo:assembleDebug --refresh-dependencies
+          for attempt in 1 2 3 4 5 6; do
+            ./gradlew :demo:assembleDebug --refresh-dependencies && exit 0
+            echo "JitPack main-SNAPSHOT is still building; retrying in 30 seconds (attempt $attempt/6)."
+            sleep 30
+          done
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: motion-engine-aar-and-demo-apk
