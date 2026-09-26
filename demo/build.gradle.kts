@@ -26,5 +26,5 @@ android {
 }
 
 dependencies {
-    implementation(project(":motion-engine"))
+    implementation("com.github.satyabratadey10-a11y:SHDMotion:main-SNAPSHOT")
 }

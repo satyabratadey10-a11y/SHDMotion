@@ -10,89 +10,100 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TextView
 import com.tracker.motionengine.MotionEngine
 import java.io.File
 import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
 
 class MainActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
-    private lateinit var status: TextView
-    private lateinit var preview: ImageView
+    private val cancelled = AtomicBoolean(false)
+    private lateinit var chooseButton: Button
+    private lateinit var trackButton: Button
     private lateinit var progress: ProgressBar
+    private lateinit var status: TextView
+    private lateinit var preview: FrameSelectionView
+    private var selectedUri: Uri? = null
+    private var firstFrame: Bitmap? = null
     private val pickVideoRequest = 401
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(createContent())
+        setContentView(buildUi())
     }
 
-    private fun createContent(): ScrollView {
+    private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
+            setPadding(20, 20, 20, 20)
         }
         val title = TextView(this).apply {
-            text = "SHDMotion video tracker"
+            text = "SHDMotion tracker"
             textSize = 22f
             setTextColor(Color.rgb(16, 24, 32))
-            setPadding(0, 0, 0, 12)
         }
-        val description = TextView(this).apply {
-            text = "Select an MP4. The demo detects light-blue pixels in the first frame, tracks the bounding box, and exports CSV coordinates."
+        val instructions = TextView(this).apply {
+            text = "1. Choose an MP4.  2. Drag over the light-blue object in the preview.  3. Start tracking."
             textSize = 15f
-            setPadding(0, 0, 0, 16)
+            setPadding(0, 10, 0, 10)
         }
-        val choose = Button(this).apply {
-            text = "Choose MP4 and track"
+        chooseButton = Button(this).apply {
+            text = "Choose MP4"
             setOnClickListener { chooseVideo() }
         }
-        progress = ProgressBar(this).apply {
-            isIndeterminate = true
-            visibility = ProgressBar.GONE
+        trackButton = Button(this).apply {
+            text = "Start tracking"
+            isEnabled = false
+            setOnClickListener { startTracking() }
+        }
+        val cancelButton = Button(this).apply {
+            text = "Cancel"
+            setOnClickListener {
+                cancelled.set(true)
+                status.text = "Cancelling..."
+            }
+        }
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            visibility = View.GONE
         }
         status = TextView(this).apply {
-            text = "Waiting for a video."
-            textSize = 14f
-            setPadding(0, 16, 0, 16)
+            text = "No video selected."
+            setPadding(0, 8, 0, 8)
         }
-        preview = ImageView(this).apply {
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(Color.BLACK)
-        }
+        preview = FrameSelectionView(this)
         root.addView(title)
-        root.addView(description)
-        root.addView(choose, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(progress, LinearLayout.LayoutParams(-1, 64).apply { gravity = Gravity.CENTER })
+        root.addView(instructions)
+        root.addView(chooseButton, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(trackButton, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(cancelButton, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(progress, LinearLayout.LayoutParams(-1, 32))
         root.addView(status)
         root.addView(preview, LinearLayout.LayoutParams(-1, 0, 1f))
-        return ScrollView(this).apply { addView(root) }
+        return root
     }
 
     private fun chooseVideo() {
-        startActivityForResult(
-            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                type = "video/mp4"
-                addCategory(Intent.CATEGORY_OPENABLE)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-            },
-            pickVideoRequest
-        )
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "video/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }, pickVideoRequest)
     }
 
-    @Deprecated("Activity result API is unnecessary for this minimal test app.")
+    @Deprecated("Uses the platform picker to keep this demo dependency-free.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != pickVideoRequest || resultCode != RESULT_OK) return
@@ -100,44 +111,171 @@ class MainActivity : Activity() {
         try {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         } catch (_: SecurityException) {
-            // Some document providers grant a temporary read permission only.
         }
-        runTracking(uri)
+        loadFirstFrame(uri)
     }
 
-    private fun runTracking(uri: Uri) {
-        progress.visibility = ProgressBar.VISIBLE
-        status.text = "Decoding frames and tracking..."
+    private fun loadFirstFrame(uri: Uri) {
+        selectedUri = uri
+        chooseButton.isEnabled = false
+        trackButton.isEnabled = false
+        progress.visibility = View.VISIBLE
+        progress.isIndeterminate = true
+        status.text = "Loading the first video frame..."
         executor.execute {
             val result = try {
-                VideoTracker(contentResolver, cacheDir).track(uri)
+                val retriever = MediaMetadataRetriever()
+                val descriptor = contentResolver.openFileDescriptor(uri, "r")
+                if (descriptor == null) {
+                    retriever.release()
+                    throw IllegalStateException("The selected video cannot be opened.")
+                }
+                try {
+                    retriever.setDataSource(descriptor.fileDescriptor)
+                    retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST)
+                        ?.copy(Bitmap.Config.ARGB_8888, false)
+                        ?: throw IllegalStateException("The video has no decodable first frame.")
+                } finally {
+                    descriptor.close()
+                    retriever.release()
+                }
             } catch (error: Exception) {
-                TrackResult(null, error.message ?: error.javaClass.simpleName, 0, null)
+                error
             }
             runOnUiThread {
-                progress.visibility = ProgressBar.GONE
-                result.preview?.let { preview.setImageBitmap(it) }
+                chooseButton.isEnabled = true
+                progress.visibility = View.GONE
+                if (result is Bitmap) {
+                    firstFrame?.recycle()
+                    firstFrame = result
+                    preview.setFrame(result)
+                    trackButton.isEnabled = true
+                    status.text = "Frame loaded. Drag a box around the light-blue object."
+                } else {
+                    status.text = "Could not load video: ${(result as Exception).message}"
+                }
+            }
+        }
+    }
+
+    private fun startTracking() {
+        val uri = selectedUri ?: return
+        if (firstFrame == null) return
+        val box = preview.selection()
+        if (box.width < 4f || box.height < 4f) {
+            status.text = "Draw a rectangle around the object first."
+            return
+        }
+        cancelled.set(false)
+        chooseButton.isEnabled = false
+        trackButton.isEnabled = false
+        progress.visibility = View.VISIBLE
+        progress.isIndeterminate = false
+        progress.progress = 0
+        status.text = "Tracking..."
+        executor.execute {
+            val result = try {
+                VideoTracker(contentResolver, cacheDir, cancelled) { completed, total ->
+                    runOnUiThread {
+                        progress.progress = (completed * 100 / total).coerceIn(0, 100)
+                        status.text = "Tracking frame $completed of $total..."
+                    }
+                }.track(uri, box)
+            } catch (error: Exception) {
+                TrackResult(null, "Tracking failed: ${error.message ?: error.javaClass.simpleName}", 0)
+            }
+            runOnUiThread {
+                chooseButton.isEnabled = true
+                trackButton.isEnabled = true
+                progress.visibility = View.GONE
+                result.preview?.let { preview.setFrame(it, result.box) }
                 status.text = result.message
             }
         }
     }
 
     override fun onDestroy() {
+        cancelled.set(true)
         executor.shutdownNow()
+        firstFrame?.recycle()
         super.onDestroy()
     }
+}
+
+private class FrameSelectionView(context: android.content.Context) : View(context) {
+    private var frame: Bitmap? = null
+    private var box = MotionEngine.BoundingBox(0f, 0f, 0f, 0f)
+    private var dragging = false
+    private var startX = 0f
+    private var startY = 0f
+    private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(0, 255, 100)
+        style = Paint.Style.STROKE
+        strokeWidth = 5f
+    }
+
+    fun setFrame(bitmap: Bitmap, trackedBox: MotionEngine.BoundingBox? = null) {
+        frame = bitmap
+        if (trackedBox != null) box = trackedBox
+        invalidate()
+    }
+
+    fun selection() = box
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val bitmap = frame ?: return
+        val scale = min(width.toFloat() / bitmap.width, height.toFloat() / bitmap.height)
+        val left = (width - bitmap.width * scale) / 2f
+        val top = (height - bitmap.height * scale) / 2f
+        canvas.drawBitmap(bitmap, null,
+            android.graphics.RectF(left, top, left + bitmap.width * scale, top + bitmap.height * scale), null)
+        if (box.width > 0f) {
+            canvas.drawRect(left + box.x * scale, top + box.y * scale,
+                left + (box.x + box.width) * scale, top + (box.y + box.height) * scale, border)
+        }
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val bitmap = frame ?: return false
+        val scale = min(width.toFloat() / bitmap.width, height.toFloat() / bitmap.height)
+        val left = (width - bitmap.width * scale) / 2f
+        val top = (height - bitmap.height * scale) / 2f
+        val x = ((event.x - left) / scale).coerceIn(0f, bitmap.width.toFloat())
+        val y = ((event.y - top) / scale).coerceIn(0f, bitmap.height.toFloat())
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                startX = x
+                startY = y
+                box = MotionEngine.BoundingBox(x, y, 0f, 0f)
+                dragging = true
+            }
+            MotionEvent.ACTION_MOVE -> if (dragging) box = normalized(startX, startY, x, y)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (dragging) box = normalized(startX, startY, x, y)
+                dragging = false
+            }
+        }
+        invalidate()
+        return true
+    }
+
+    private fun normalized(x1: Float, y1: Float, x2: Float, y2: Float) =
+        MotionEngine.BoundingBox(min(x1, x2), min(y1, y2), kotlin.math.abs(x2 - x1), kotlin.math.abs(y2 - y1))
 }
 
 private data class TrackResult(
     val preview: Bitmap?,
     val message: String,
     val frames: Int,
-    val output: File?
+    val box: MotionEngine.BoundingBox? = null
 )
 
 private class VideoTracker(
     private val resolver: android.content.ContentResolver,
-    private val cacheDir: File
+    private val cacheDir: File,
+    private val cancelled: AtomicBoolean,
+    private val onProgress: (completed: Int, total: Int) -> Unit
 ) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(0, 255, 80)
@@ -145,110 +283,53 @@ private class VideoTracker(
         strokeWidth = 5f
     }
 
-    fun track(uri: Uri): TrackResult {
+    fun track(uri: Uri, initialBox: MotionEngine.BoundingBox): TrackResult {
         val retriever = MediaMetadataRetriever()
         val descriptor = resolver.openFileDescriptor(uri, "r")
-            ?: return TrackResult(null, "Could not open the selected video.", 0, null)
-        retriever.setDataSource(descriptor.fileDescriptor)
-        val durationUs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            ?.toLongOrNull()?.times(1000L) ?: 0L
-        if (durationUs <= 0L) {
-            descriptor.close()
-            retriever.release()
-            return TrackResult(null, "Could not read video duration.", 0, null)
-        }
-        val stepUs = 100_000L
+            ?: throw IllegalStateException("The selected video cannot be opened.")
         var previous: Bitmap? = null
-        var box: MotionEngine.BoundingBox? = null
-        var firstPreview: Bitmap? = null
-        var lastPreview: Bitmap? = null
+        var last: Bitmap? = null
+        var box = initialBox
         var frameCount = 0
-        val csv = File(cacheDir, "motion-tracking-${System.currentTimeMillis()}.csv")
-        csv.bufferedWriter().use { writer ->
-            writer.appendLine("time_ms,x,y,width,height")
-            var timeUs = 0L
-            while (timeUs <= durationUs) {
-                val frame = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
-                if (frame != null) {
+        try {
+            retriever.setDataSource(descriptor.fileDescriptor)
+            val durationUs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()?.times(1000L) ?: throw IllegalStateException("Video duration is unavailable.")
+            val stepUs = 200_000L
+            val totalFrames = max(1, min(600, (durationUs / stepUs + 1).toInt()))
+            val csv = File(cacheDir, "motion-tracking-${System.currentTimeMillis()}.csv")
+            csv.bufferedWriter().use { writer ->
+                writer.appendLine("time_ms,x,y,width,height")
+                var timeUs = 0L
+                while (timeUs <= durationUs && frameCount < totalFrames && !cancelled.get()) {
+                    val frame = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                        ?: throw IllegalStateException("Could not decode frame at ${timeUs / 1000} ms.")
                     val rgba = frame.copy(Bitmap.Config.ARGB_8888, false)
-                    val currentBuffer = rgba.toRgbaBuffer()
-                    if (box == null) {
-                        box = detectLightBlue(rgba)
-                        if (box == null) {
-                            descriptor.close()
-                            retriever.release()
-                            return TrackResult(null, "No light-blue region found in the first frame.", frameCount, null)
-                        }
-                    } else if (previous != null) {
-                        box = MotionEngine.trackBoundingBox(
-                            previous!!.toRgbaBuffer(), currentBuffer, rgba.width, rgba.height,
-                            rgba.width * 4, box!!, searchRadius = max(24, min(rgba.width / 8, 96)),
-                            templateRadius = max(8, min(box!!.width.toInt() / 2, 32))
-                        )
+                    if (previous != null) {
+                        box = MotionEngine.trackBoundingBox(previous!!.toRgbaBuffer(), rgba.toRgbaBuffer(),
+                            rgba.width, rgba.height, rgba.width * 4, box,
+                            searchRadius = max(24, min(rgba.width / 8, 96)),
+                            templateRadius = max(8, min(box.width.toInt() / 2, 32)))
                     }
-                    val tracked = drawBox(rgba, box!!)
-                    if (firstPreview == null) firstPreview = tracked
-                    lastPreview = tracked
-                    val currentBox = box!!
-                    writer.appendLine(String.format(
-                        Locale.US, "%.0f,%.2f,%.2f,%.2f,%.2f",
-                        timeUs / 1000.0, currentBox.x, currentBox.y, currentBox.width, currentBox.height
-                    ))
+                    last?.recycle()
+                    last = drawBox(rgba, box)
+                    writer.appendLine(String.format(Locale.US, "%.0f,%.2f,%.2f,%.2f,%.2f",
+                        timeUs / 1000.0, box.x, box.y, box.width, box.height))
                     previous?.recycle()
                     previous = rgba
                     frameCount++
-                }
-                timeUs += stepUs
-            }
-        }
-        previous?.recycle()
-        descriptor.close()
-        retriever.release()
-        val name = queryDisplayName(uri)
-        return TrackResult(
-            lastPreview,
-            "Tracked $frameCount frames from $name. CSV saved at ${csv.absolutePath}",
-            frameCount,
-            csv
-        )
-    }
-
-    private fun queryDisplayName(uri: Uri): String {
-        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-            if (it.moveToFirst()) return it.getString(0)
-        }
-        return uri.lastPathSegment ?: "video"
-    }
-
-    private fun detectLightBlue(bitmap: Bitmap): MotionEngine.BoundingBox? {
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        var left = bitmap.width
-        var top = bitmap.height
-        var right = -1
-        var bottom = -1
-        for (y in 0 until bitmap.height) {
-            for (x in 0 until bitmap.width) {
-                val color = pixels[y * bitmap.width + x]
-                val red = Color.red(color)
-                val green = Color.green(color)
-                val blue = Color.blue(color)
-                if (blue >= 135 && blue > red + 25 && green > red + 15 && blue >= green - 45) {
-                    left = min(left, x)
-                    top = min(top, y)
-                    right = max(right, x)
-                    bottom = max(bottom, y)
+                    onProgress(frameCount, totalFrames)
+                    timeUs += stepUs
                 }
             }
+            val message = if (cancelled.get()) "Tracking cancelled after $frameCount frames."
+            else "Tracked $frameCount frames. CSV saved at ${csv.absolutePath}"
+            return TrackResult(last, message, frameCount, box)
+        } finally {
+            previous?.recycle()
+            descriptor.close()
+            retriever.release()
         }
-        if (right < left || bottom < top || right - left < 4 || bottom - top < 4) return null
-        val padding = 8
-        return MotionEngine.BoundingBox(
-            max(0, left - padding).toFloat(),
-            max(0, top - padding).toFloat(),
-            min(bitmap.width - max(0, left - padding), right - left + padding * 2).toFloat(),
-            min(bitmap.height - max(0, top - padding), bottom - top + padding * 2).toFloat()
-        )
     }
 
     private fun drawBox(bitmap: Bitmap, box: MotionEngine.BoundingBox): Bitmap {
@@ -260,14 +341,14 @@ private class VideoTracker(
     private fun Bitmap.toRgbaBuffer(): ByteBuffer {
         val pixels = IntArray(width * height)
         getPixels(pixels, 0, width, 0, 0, width, height)
-        val buffer = ByteBuffer.allocateDirect(width * height * 4)
-        for (color in pixels) {
-            buffer.put(Color.red(color).toByte())
-            buffer.put(Color.green(color).toByte())
-            buffer.put(Color.blue(color).toByte())
-            buffer.put(Color.alpha(color).toByte())
+        return ByteBuffer.allocateDirect(width * height * 4).apply {
+            pixels.forEach { color ->
+                put(Color.red(color).toByte())
+                put(Color.green(color).toByte())
+                put(Color.blue(color).toByte())
+                put(Color.alpha(color).toByte())
+            }
+            rewind()
         }
-        buffer.rewind()
-        return buffer
     }
 }
