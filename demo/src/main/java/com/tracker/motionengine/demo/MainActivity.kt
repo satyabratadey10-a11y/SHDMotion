@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
@@ -17,6 +18,8 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.graphics.drawable.GradientDrawable
+import android.content.res.ColorStateList
 import com.tracker.motionengine.MotionEngine
 import java.io.File
 import java.nio.ByteBuffer
@@ -40,60 +43,107 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.statusBarColor = Color.rgb(18, 20, 56)
+        window.navigationBarColor = Color.rgb(10, 12, 35)
         setContentView(buildUi())
     }
 
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(20, 20, 20, 20)
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.rgb(18, 20, 56), Color.rgb(70, 38, 100), Color.rgb(8, 105, 128))
+            )
         }
         val title = TextView(this).apply {
-            text = "SHDMotion tracker"
-            textSize = 22f
-            setTextColor(Color.rgb(16, 24, 32))
+            text = "SHDMotion  /  TRACKER"
+            textSize = 24f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            letterSpacing = 0.04f
         }
         val instructions = TextView(this).apply {
-            text = "1. Choose an MP4.  2. Drag over the light-blue object in the preview.  3. Start tracking."
+            text = "Pick a frame · Draw a target · Track motion"
             textSize = 15f
-            setPadding(0, 10, 0, 10)
+            setTextColor(Color.argb(215, 255, 255, 255))
+            setPadding(0, dp(6), 0, dp(14))
         }
         chooseButton = Button(this).apply {
-            text = "Choose MP4"
+            text = "＋  Choose video"
+            textSize = 15f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = glassButton(Color.argb(70, 255, 255, 255), Color.argb(150, 255, 255, 255))
             setOnClickListener { chooseVideo() }
         }
         trackButton = Button(this).apply {
-            text = "Start tracking"
+            text = "✦  Start tracking"
+            textSize = 15f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = glassButton(Color.rgb(0, 176, 190), Color.argb(210, 137, 255, 247))
             isEnabled = false
             setOnClickListener { startTracking() }
         }
         val cancelButton = Button(this).apply {
-            text = "Cancel"
+            text = "Cancel tracking"
+            textSize = 14f
+            isAllCaps = false
+            setTextColor(Color.argb(235, 255, 220, 235))
+            background = glassButton(Color.argb(55, 255, 100, 170), Color.argb(130, 255, 180, 215))
             setOnClickListener {
                 cancelled.set(true)
-                status.text = "Cancelling..."
+                status.text = "Cancelling tracking..."
             }
         }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
             visibility = View.GONE
+            progressTintList = ColorStateList.valueOf(Color.rgb(120, 255, 231))
+            progressBackgroundTintList = ColorStateList.valueOf(Color.argb(70, 255, 255, 255))
         }
         status = TextView(this).apply {
             text = "No video selected."
-            setPadding(0, 8, 0, 8)
+            textSize = 14f
+            setTextColor(Color.argb(230, 255, 255, 255))
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = glassButton(Color.argb(45, 255, 255, 255), Color.argb(75, 255, 255, 255))
         }
-        preview = FrameSelectionView(this)
+        preview = FrameSelectionView(this).apply {
+            background = glassButton(Color.argb(65, 255, 255, 255), Color.argb(120, 255, 255, 255))
+            elevation = dp(8).toFloat()
+        }
         root.addView(title)
         root.addView(instructions)
-        root.addView(chooseButton, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(trackButton, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(cancelButton, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(progress, LinearLayout.LayoutParams(-1, 32))
-        root.addView(status)
-        root.addView(preview, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(chooseButton, marginParams(12))
+        root.addView(trackButton, marginParams(8))
+        root.addView(cancelButton, marginParams(8))
+        root.addView(progress, LinearLayout.LayoutParams(-1, dp(28)).apply {
+            setMargins(0, dp(8), 0, dp(4))
+        })
+        root.addView(status, marginParams(8))
+        root.addView(preview, LinearLayout.LayoutParams(-1, 0, 1f).apply {
+            setMargins(0, dp(12), 0, 0)
+        })
         return root
     }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun marginParams(top: Int): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, dp(top), 0, 0)
+        }
+
+    private fun glassButton(fill: Int, stroke: Int): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            setStroke(dp(1), stroke)
+            cornerRadius = dp(18).toFloat()
+        }
 
     private fun chooseVideo() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -228,8 +278,14 @@ private class FrameSelectionView(context: android.content.Context) : View(contex
         val scale = min(width.toFloat() / bitmap.width, height.toFloat() / bitmap.height)
         val left = (width - bitmap.width * scale) / 2f
         val top = (height - bitmap.height * scale) / 2f
-        canvas.drawBitmap(bitmap, null,
-            android.graphics.RectF(left, top, left + bitmap.width * scale, top + bitmap.height * scale), null)
+        val frameRect = android.graphics.RectF(
+            left, top, left + bitmap.width * scale, top + bitmap.height * scale
+        )
+        val clip = Path().apply { addRoundRect(frameRect, 18f, 18f, Path.Direction.CW) }
+        canvas.save()
+        canvas.clipPath(clip)
+        canvas.drawBitmap(bitmap, null, frameRect, null)
+        canvas.restore()
         if (box.width > 0f) {
             canvas.drawRect(left + box.x * scale, top + box.y * scale,
                 left + (box.x + box.width) * scale, top + (box.y + box.height) * scale, border)

@@ -64,6 +64,10 @@ demo/build/outputs/apk/debug/demo-debug.apk
 The demo intentionally processes frames off the UI thread and requires no storage permission;
 the Android document picker grants read access to the selected MP4.
 
+The demo UI uses a colorful liquid-glass treatment with translucent rounded controls and a
+glass preview surface. The first decoded frame is shown before tracking so the target rectangle
+can be drawn directly over the object.
+
 ## Direct-buffer API
 
 The Kotlin API accepts direct `java.nio.ByteBuffer` instances. Frames must use the declared stride and pixel format:
